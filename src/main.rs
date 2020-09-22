@@ -1,9 +1,11 @@
 #![no_std]
 #![no_main]
 
+#[allow(dead_code)]
+
 mod encoder;
-mod can;
 mod memory;
+mod status;
 
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
@@ -36,6 +38,7 @@ use stm32f1xx_hal::{
     prelude::*,
     gpio,
     gpio::ExtiPin,
+    pac,
     pac::{
         Interrupt
     }
@@ -47,7 +50,7 @@ use rtic::cyccnt::{Instant, U32Ext as _};
 #[allow(unused_imports)]
 use micromath::F32Ext;
 
-static SYSTEM_CLOCK: u32 = 8_000_000; // hz
+static SYSTEM_CLOCK: u32 = 72_000_000; // hz
 static SECONDS_PER_CYCLE: f32 = 1.0 / SYSTEM_CLOCK as f32; // seconds
 
 // type definitions
@@ -56,6 +59,15 @@ type StatusLed2 = gpio::gpiob::PB4<gpio::Output<gpio::PushPull>>;
 type StatusLed3 = gpio::gpiob::PB3<gpio::Output<gpio::PushPull>>;
 
 type PowerSense = gpio::gpiob::PB15<gpio::Input<gpio::Floating>>;
+
+// memory pools
+pool!(
+    CanTXPool: [u8; 128]
+);
+
+pool!(
+    StatusPool: [u8; 128]
+);
 
 // waiting for the CAN API to be released
 // https://github.com/stm32-rs/stm32f1xx-hal/pull/215
@@ -80,11 +92,11 @@ const APP: () = {
         status3: StatusLed3,
 
         power_sense: PowerSense,
-        encoder: encoder::Encoder<>,
-        eeprom: memory::EEProm<>
+        encoder: encoder::Encoder<spi::Spi<pac::SPI1, spi::Spi1NoRemap, encoder::SPIPins, u16>>,
+        eeprom: memory::EEProm<i2c::BlockingI2c<pac::I2C2, memory::I2CPins>>
     }
 
-    #[init(schedule = [send_can_messages])]
+    #[init(schedule=[can_tx])]
     fn init(cx: init::Context) -> init::LateResources {
         // hardware init
         let mut peripherals: rtic::Peripherals = cx.core;
@@ -93,10 +105,15 @@ const APP: () = {
         let mut flash = device.FLASH.constrain();
         let mut rcc = device.RCC.constrain();
         let mut afio = device.AFIO.constrain(&mut rcc.apb2);
-        let mut exti = device.EXTI;
+        let exti = device.EXTI;
         
         // TODO: configure the clocks, currently have no idea how to do this
-        let clocks = rcc.cfgr.use_hse(8.mhz()).freeze(&mut flash.acr);
+        let clocks = rcc.cfgr.use_hse(8.mhz())
+            .sysclk(72.mhz())
+            .hclk(72.mhz())
+            .pclk1(36.mhz())
+            .pclk2(72.mhz())
+            .freeze(&mut flash.acr);
 
         // gpio structs
         let mut gpioa = device.GPIOA.split(&mut rcc.apb2);
@@ -119,9 +136,9 @@ const APP: () = {
         // TODO: set interrupt for this maybe?
 
         // encoder pins (need to configure interrupts for this)
-        let encoder_a = gpioa.pa8.into_pull_down_input(&mut gpioa.crh).downgrade();
-        let encoder_b = gpioa.pa9.into_pull_down_input(&mut gpioa.crh).downgrade();
-        let encoder_i = gpioa.pa10.into_pull_down_input(&mut gpioa.crh).downgrade();
+        let mut encoder_a = gpioa.pa8.into_pull_down_input(&mut gpioa.crh).downgrade();
+        let mut encoder_b = gpioa.pa9.into_pull_down_input(&mut gpioa.crh).downgrade();
+        let mut encoder_i = gpioa.pa10.into_pull_down_input(&mut gpioa.crh).downgrade();
         
         encoder_a.make_interrupt_source(&mut afio);
         encoder_a.trigger_on_edge(&exti, gpio::Edge::RISING_FALLING);
@@ -156,9 +173,7 @@ const APP: () = {
             100   // data_timeout_us
         );
 
-        let eeprom = memory::EEProm {
-            i2c
-        };
+        let eeprom = memory::EEProm::new(i2c);
 
         // encoder spi
         let spi_pins = (
@@ -172,15 +187,18 @@ const APP: () = {
             phase: spi::Phase::CaptureOnFirstTransition
         };
 
-        let spi =  spi::Spi::spi1(device.SPI1, spi_pins, &mut afio.mapr, spi_mode, 100.khz(), clocks, &mut rcc.apb2);
+        // let spi = spi::
 
+        let spi1 =  spi::Spi::spi1(device.SPI1, spi_pins, &mut afio.mapr, spi_mode, 100.khz(), clocks, &mut rcc.apb2);
+        let spi1 = spi1.frame_size_16bit();
+        
         let encoder = encoder::Encoder::new(
             0, false, 0,
             encoder_a, encoder_b, encoder_i,
-            spi
+            spi1
         );
 
-        // eventually we need to set up DMA for some spi stuff
+        // eventually we should to set up DMA for some spi stuff
 
 
         // CAN ID
@@ -199,10 +217,10 @@ const APP: () = {
         DWT::unlock();
         peripherals.DWT.enable_cycle_counter();
 
-        let now = cx.start;
+        let _now = cx.start;
         // hprintln!("init @ {:?}", now).unwrap();
 
-        cx.schedule.send_can_messages(now + 8_000_000.cycles()).unwrap();
+        // cx.schedule.send_can_messages(now + 8_000_000.cycles()).unwrap();
 
         init::LateResources {
             CAN_id,
@@ -218,7 +236,7 @@ const APP: () = {
     #[idle(resources=[])]
     fn idle(mut _cx: idle::Context) -> ! {
 
-        loop {}
+        loop { cortex_m::asm::nop(); }
     }
 
     #[task(binds = EXTI9_5, priority = 2, resources=[encoder])]
@@ -227,31 +245,44 @@ const APP: () = {
     }
 
     #[task]
-    fn low_power() {
-        
+    fn low_power(_: low_power::Context) {
+        // run this at 200 hz? 500 hz?
+        // check for shutdown condition and store data
     }
 
-    #[task]
+    #[task(resources=[eeprom, encoder])]
     fn mem_tx(cx: mem_tx::Context) {
         // Send data to eeprom memory
         // this will be called on shutdown
+        let _eeprom = cx.resources.eeprom;
+        let _encoder = cx.resources.encoder;
+
+        // let ticks 
+
+        // let ticks: i32 = encoder.count();
     }
 
-    #[task]
+    #[task(resources=[eeprom, encoder])]
     fn mem_rx(cx: mem_rx::Context) {
         // Recieve data from eeprom memory
         // this will be called on shutdown
+        let eeprom = cx.resources.eeprom;
+        let _encoder = cx.resources.encoder;
+
+        let _ticks: i32 = eeprom.read_data(memory::Address::Ticks as u8);
+        let _inverted: bool = eeprom.read_bool(memory::Address::Polarity as u8);
+        let _absolute_offset: u16 = eeprom.read_data(memory::Address::AbsoluteOffset as u8);
     }
 
 
     #[task(resources=[CAN_id])]
-    fn can_tx(cx: can_tx::Context) {
+    fn can_tx(_cx: can_tx::Context) {
         // send CAN frames over the network
         // call this at 20 hz maybe?
     }
 
     #[task(resources=[CAN_id])]
-    fn can_rx(cx: can_rx::Conext) {
+    fn can_rx(_cx: can_rx::Context) {
         // recieve CAN frames from over the network
     }
 

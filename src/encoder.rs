@@ -1,16 +1,13 @@
 use stm32f1xx_hal::{
-    spi,
+    spi::SpiReadWrite,
     gpio,
-    gpio::ExtiPin
+    gpio::ExtiPin,
+    spi::FullDuplex
 };
 
 use embedded_hal::digital::v2::InputPin;
 
-// pub type EncoderChannelA = gpio::gpioa::PA8<gpio::Input<gpio::PullDown>>;
-// pub type EncoderChannelB = gpio::gpioa::PA9<gpio::Input<gpio::PullDown>>;
-// pub type EncoderChannelI = gpio::gpioa::PA10<gpio::Input<gpio::PullDown>>;
-
-pub type EncoderChannel = gpio::Pxx<gpio::Input<gpio::PullDown>>;
+use volatile::Volatile;
 
 pub enum Address {
 
@@ -39,40 +36,57 @@ struct Diagnostics {
 
 }
 
-pub struct Encoder<SPI, REMAP, PINS> {
-    count: i32,
-    inverted: bool,
-    absolute_offset: u16,
+pub type EncoderChannel = gpio::Pxx<gpio::Input<gpio::PullDown>>;
+
+// types to make abstraction easier
+pub type MOSIPin = gpio::gpioa::PA5<gpio::Alternate<gpio::PushPull>>;
+pub type MISOPin = gpio::gpioa::PA6<gpio::Input<gpio::Floating>>;
+pub type SCKPin =  gpio::gpioa::PA7<gpio::Alternate<gpio::PushPull>>;
+pub type SPIPins = (MOSIPin, MISOPin, SCKPin);
+
+pub struct Encoder<SPI> {
+    count: Volatile<i32>,
+    inverted: Volatile<bool>,
+    absolute_offset: Volatile<u16>,
+    prev_gpio_value: i32,
     a: EncoderChannel,
     b: EncoderChannel,
     i: EncoderChannel,
-    spi: spi::Spi<SPI, REMAP, PINS>
+    spi: SPI
 }
 
-impl <SPI, REMAP, PINS> Encoder<SPI, REMAP, PINS> {
+impl <SPI> Encoder<SPI>
+where
+    SPI: FullDuplex<u16> + SpiReadWrite<u16>
+{
 
     // look up table for encoder values
     const LUT: [i32; 16] = [0,-1,1,2,1,0,2,-1,-1,2,0,1,2,1,-1,0];
 
     pub fn new(
-        count: i32, inverted: bool, absolute_offset: u16, 
+        count: i32, inverted: bool, absolute_offset: u16,
         a: EncoderChannel, b: EncoderChannel, i: EncoderChannel,
-        spi: spi::Spi<SPI, REMAP, PINS>
+        spi: SPI
     ) -> Self {
         Encoder {
-            count, inverted, absolute_offset,
+            count: Volatile::new(count), inverted: Volatile::new(inverted),
+            absolute_offset: Volatile::new(absolute_offset), prev_gpio_value: 0,
             a, b, i, spi
         }
     }
 
-    #[inline(always)]
-    pub fn count(&self) -> i32 { self.count }
+    pub fn new_default(a: EncoderChannel, b: EncoderChannel, i: EncoderChannel, spi: SPI) -> Self {
+        Self::new(0, false, 0, a, b, i, spi)
+    }
 
     #[inline(always)]
-    pub fn inverted(&self) -> bool { self.inverted }
+    pub fn count(&self) -> i32 { self.count.read() }
 
     #[inline(always)]
-    pub fn absolute_offset(&self) -> u16 { self.absolute_offset }
+    pub fn inverted(&self) -> bool { self.inverted.read() }
+
+    #[inline(always)]
+    pub fn absolute_offset(&self) -> u16 { self.absolute_offset.read() }
 
     #[inline(always)]
     pub fn absolute_position() -> u16 {
@@ -80,12 +94,19 @@ impl <SPI, REMAP, PINS> Encoder<SPI, REMAP, PINS> {
     }
 
     #[inline(always)]
-    pub fn reset_count(&mut self) { self.count = 0; }
+    pub fn set_inverted(&mut self, new_polarity: bool) { self.inverted.update(|val_ref| *val_ref = new_polarity); }
+
+    #[inline(always)]
+    pub fn toggle_inverted(&mut self) { self.inverted.update(|val_ref| *val_ref = !(*val_ref)); }
+
+    #[inline(always)]
+    pub fn set_count(&mut self, new_count: i32) { self.count.update(|val_ref| *val_ref = new_count); }
+
+    #[inline(always)]
+    pub fn reset_count(&mut self) { self.set_count(0); }
 
     // this will always be called from the exti interrupt
     pub fn handle_encoder_interrupt(&mut self) {
-        static mut prev_gpio_value: i32 = 0;
-        
         // we arent using I for now, just return if so
         if self.i.check_interrupt() {
             self.i.clear_interrupt_pending_bit();
@@ -100,14 +121,15 @@ impl <SPI, REMAP, PINS> Encoder<SPI, REMAP, PINS> {
         let mut current_gpio_value: i32 = 0;
         current_gpio_value |= (self.a.is_high().unwrap() as i32) << 1;
         current_gpio_value |= (self.b.is_high().unwrap() as i32) << 0;
-        let increment: i32 = Self::LUT[(prev_gpio_value * 4 + current_gpio_value) as usize];
+        let increment: i32 = Self::LUT[(self.prev_gpio_value * 4 + current_gpio_value) as usize ];
 
         if increment == 2 {
             // this is bad, send error message or something
         } else {
-            self.count += if !self.inverted { increment } else { -increment };
+            let inverted = self.inverted.read();
+            self.count.update(|val_ref| *val_ref += if !inverted { increment } else { -increment });
         }
-        prev_gpio_value = current_gpio_value;
+        self.prev_gpio_value = current_gpio_value;
 
         // clear both interrupt bit (dont think this is an issue)
         self.a.clear_interrupt_pending_bit();
