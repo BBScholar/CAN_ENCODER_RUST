@@ -79,17 +79,17 @@ where
         Self::new(0, false, 0, a, b, i, spi)
     }
 
-    #[inline(always)]
-    pub fn count(&self) -> i32 { self.count.read() }
+    // #[inline(always)]
+    pub fn get_count(self) -> i32 { self.count.read() }
+
+    // #[inline(always)]
+    pub fn inverted(self) -> bool { self.inverted.read() }
 
     #[inline(always)]
-    pub fn inverted(&self) -> bool { self.inverted.read() }
+    pub fn absolute_offset(self) -> u16 { self.absolute_offset.read() }
 
     #[inline(always)]
-    pub fn absolute_offset(&self) -> u16 { self.absolute_offset.read() }
-
-    #[inline(always)]
-    pub fn absolute_position() -> u16 {
+    pub fn absolute_position(self) -> u16 {
         0
     }
 

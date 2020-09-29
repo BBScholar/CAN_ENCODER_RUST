@@ -19,6 +19,7 @@ byteorder = { version = "1.3.4", default-features = false }
 heapless = "0.5.5"
 num-traits = { version="0.2.12", default-features = false}
 volatile = "0.3.0"
+nb = "1.0.0"
 # microcrates-bytes = "0.4.8"
 
 [dependencies.stm32f1xx-hal]
@@ -26,7 +27,7 @@ version = "0.6.1"
 features = ["stm32f103", "rt"]
 
 [patch.crates-io]
-stm32f1xx-hal = { git = "https://github.com/stm32-rs/stm32f1xx-hal", features = ["stm32f103", "rt"] }
+stm32f1xx-hal = { git = "https://github.com/BBScholar/stm32f1xx-hal", branch="master", features = ["stm32f103", "rt", "stm32-usbd"] }
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"
