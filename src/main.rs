@@ -4,7 +4,7 @@
 #[allow(dead_code)]
 
 mod hardware_types;
-mod enc;
+mod encoder;
 mod memory;
 mod status;
 mod can_types;
@@ -118,7 +118,7 @@ const APP: () = {
         status_handler: status::StatusHandler,
 
         power_sense: hardware_types::PowerSense,
-        e: enc::Encoder<hardware_types::SPI>,
+        encoder: encoder::Encoder<hardware_types::SPI>,
         eeprom: memory::EEProm<hardware_types::I2C>
     }
 
@@ -222,7 +222,7 @@ const APP: () = {
         let spi1 =  spi::Spi::spi1(device.SPI1, spi_pins, &mut afio.mapr, spi_mode, 100.khz(), clocks, &mut rcc.apb2);
         let spi1 = spi1.frame_size_16bit();
         
-        let encoder: enc::Encoder<hardware_types::SPI> = enc::Encoder::new(
+        let encoder: encoder::Encoder<hardware_types::SPI> = encoder::Encoder::new(
             0, false, 0,
             encoder_a, encoder_b, encoder_i,
             spi1
@@ -295,7 +295,7 @@ const APP: () = {
             can_rx_queue,
             status_handler,
             power_sense,
-            e: encoder,
+            encoder,
             eeprom
         }
     }
@@ -306,9 +306,9 @@ const APP: () = {
         loop { cortex_m::asm::nop(); }
     }
 
-    #[task(binds = EXTI9_5, priority = 2, resources=[e])]
+    #[task(binds = EXTI9_5, priority = 2, resources=[encoder])]
     fn encoder_update(cx: encoder_update::Context) {
-        cx.resources.enc.handle_encoder_interrupt();
+        cx.resources.encoder.handle_encoder_interrupt();
     }
 
     #[task(resources=[power_ok, power_sense], schedule=[low_power], spawn=[mem_tx])]
@@ -333,16 +333,16 @@ const APP: () = {
         cx.schedule.low_power(now + (SYSTEM_CLOCK / 500).cycles());
     }
 
-    #[task(resources=[eeprom, e])]
+    #[task(resources=[eeprom, encoder])]
     fn mem_tx(cx: mem_tx::Context) {
         // Send data to eeprom memory
         // this will be called on shutdown
         let eeprom = cx.resources.eeprom;
-        let mut e = cx.resources.e;
+        let mut encoder = cx.resources.encoder;
 
         // get variables
-        let ticks = e.ticks();
-        let inverted = e.inverted();
+        let ticks = encoder.ticks();
+        let inverted = encoder.inverted();
         let absolute_offset = encoder.absolute_offset();
 
         // write to eeprom
@@ -351,26 +351,26 @@ const APP: () = {
         eeprom.write_data(memory::Address::AbsoluteOffset as u8, absolute_offset);
     }
 
-    #[task(resources=[eeprom, e])]
+    #[task(resources=[eeprom, encoder])]
     fn mem_rx(cx: mem_rx::Context) {
         // Recieve data from eeprom memory
         // this will be called on shutdown
         let eeprom = cx.resources.eeprom;
-        let _encoder = cx.resources.e;
+        let _encoder = cx.resources.encoder;
 
         let _ticks: i32 = eeprom.read_data(memory::Address::Ticks as u8);
         let _inverted: bool = eeprom.read_bool(memory::Address::Polarity as u8);
         let _absolute_offset: u16 = eeprom.read_data(memory::Address::AbsoluteOffset as u8);
     }
 
-    #[task(resources=[can_rx_queue, can_tx_queue, CAN_id, e], schedule=[handle_can_rx])]
+    #[task(resources=[can_rx_queue, can_tx_queue, CAN_id, encoder], schedule=[handle_can_rx])]
     fn handle_can_rx(cx: handle_can_rx::Context) {
         use can_types::*;
 
         let rx_queue = cx.resources.can_rx_queue;
         let tx_queue = cx.resources.can_tx_queue;
         
-        let encoder: enc::Encoder<hardware_types::SPI> = cx.resources.e;
+        let encoder: encoder::Encoder<hardware_types::SPI> = cx.resources.encoder;
 
         // call this at 20hz
         // probably want to lock queue here
