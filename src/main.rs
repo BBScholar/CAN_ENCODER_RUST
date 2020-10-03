@@ -57,12 +57,12 @@ use core::convert::{
     Into, TryInto
 };
 
-static SYSTEM_CLOCK: u32 = 72_000_000; // hz
-static SECONDS_PER_CYCLE: f32 = 1.0 / SYSTEM_CLOCK as f32; // seconds
+const HSE_CLOCK_MHZ: u32 = 8;
+const SYSTEM_CLOCK_MHZ: u32 = 72;
+const SYSTEM_CLOCK: u32 = SYSTEM_CLOCK_MHZ * 1E6 as u32; // hz
+const SECONDS_PER_CYCLE: f32 = 1.0 / SYSTEM_CLOCK as f32; // seconds
 
-// type definitions
-
-
+// type definitions 
 
 // memory pools
 pool!(
@@ -138,11 +138,11 @@ const APP: () = {
         let exti = device.EXTI;
         
         // TODO: double check these values
-        let clocks = rcc.cfgr.use_hse(8.mhz())
-            .sysclk(72.mhz())
-            .hclk(72.mhz())
-            .pclk1(36.mhz())
-            .pclk2(72.mhz())
+        let clocks = rcc.cfgr.use_hse((HSE_CLOCK_MHZ).mhz())
+            .sysclk((SYSTEM_CLOCK_MHZ).mhz())
+            .hclk((SYSTEM_CLOCK_MHZ).mhz())
+            .pclk1((SYSTEM_CLOCK_MHZ / 2).mhz())
+            .pclk2((SYSTEM_CLOCK_MHZ).mhz())
             .freeze(&mut flash.acr);
 
         // gpio structs
@@ -385,7 +385,7 @@ const APP: () = {
 
             let result = match ident {
                 FrameIdentifier::SetTicks => {
-                    let parsed_frame: SetTicksFrame = frame.try_into().unwrap();
+                    let parsed_frame: SetTicksFrame = (*frame).try_into().unwrap();
                     let ticks = parsed_frame.ticks();
                     encoder.set_ticks(ticks);
                     Ok(())

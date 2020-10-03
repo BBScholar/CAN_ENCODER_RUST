@@ -61,7 +61,7 @@ where
 
     pub fn new(
         count: i32, inverted: bool, absolute_offset: u16,
-        a: EncoderChannel, b: EncoderChannel, i: EncoderChannel,
+        a: EncoderChannelA, b: EncoderChannelB, i: EncoderChannelI,
         spi: SPI
     ) -> Self {
         Encoder {
@@ -71,7 +71,7 @@ where
         }
     }
 
-    pub fn new_default(a: EncoderChannel, b: EncoderChannel, i: EncoderChannel, spi: SPI) -> Self {
+    pub fn new_default(a: EncoderChannelA, b: EncoderChannelB, i: EncoderChannelI, spi: SPI) -> Self {
         Self::new(0, false, 0, a, b, i, spi)
     }
 
