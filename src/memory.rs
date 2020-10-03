@@ -1,8 +1,4 @@
 
-use stm32f1xx_hal::{
-    gpio,
-};
-
 use embedded_hal::blocking::i2c::{
     Write, Read, WriteRead
 };
@@ -30,10 +26,6 @@ pub enum Address {
     Polarity       = 4,    // 8 bit boolean
     AbsoluteOffset = 5     // 16 bit uint
 }
-
-pub type SclPin = gpio::gpiob::PB10<gpio::Alternate<gpio::OpenDrain>>;
-pub type SdaPin = gpio::gpiob::PB11<gpio::Alternate<gpio::OpenDrain>>;
-pub type I2CPins = (SclPin, SdaPin);
 
 pub struct EEProm<I2C> {
     i2c: I2C

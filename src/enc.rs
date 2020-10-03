@@ -9,6 +9,10 @@ use embedded_hal::digital::v2::InputPin;
 
 use volatile::Volatile;
 
+use crate::hardware_types::{
+    EncoderChannelA, EncoderChannelB, EncoderChannelI
+};
+
 pub enum Address {
 
     // Volatile
@@ -36,22 +40,14 @@ struct Diagnostics {
 
 }
 
-pub type EncoderChannel = gpio::Pxx<gpio::Input<gpio::PullDown>>;
-
-// types to make abstraction easier
-pub type MOSIPin = gpio::gpioa::PA5<gpio::Alternate<gpio::PushPull>>;
-pub type MISOPin = gpio::gpioa::PA6<gpio::Input<gpio::Floating>>;
-pub type SCKPin =  gpio::gpioa::PA7<gpio::Alternate<gpio::PushPull>>;
-pub type SPIPins = (MOSIPin, MISOPin, SCKPin);
-
 pub struct Encoder<SPI> {
-    count: Volatile<i32>,
+    ticks: Volatile<i32>,
     inverted: Volatile<bool>,
     absolute_offset: Volatile<u16>,
     prev_gpio_value: i32,
-    a: EncoderChannel,
-    b: EncoderChannel,
-    i: EncoderChannel,
+    a: EncoderChannelA,
+    b: EncoderChannelB,
+    i: EncoderChannelI,
     spi: SPI
 }
 
@@ -69,7 +65,7 @@ where
         spi: SPI
     ) -> Self {
         Encoder {
-            count: Volatile::new(count), inverted: Volatile::new(inverted),
+            ticks: Volatile::new(count), inverted: Volatile::new(inverted),
             absolute_offset: Volatile::new(absolute_offset), prev_gpio_value: 0,
             a, b, i, spi
         }
@@ -79,14 +75,14 @@ where
         Self::new(0, false, 0, a, b, i, spi)
     }
 
-    // #[inline(always)]
-    pub fn get_count(self) -> i32 { self.count.read() }
-
-    // #[inline(always)]
-    pub fn inverted(self) -> bool { self.inverted.read() }
+    #[inline(always)]
+    pub fn ticks(&self) -> i32 { self.ticks.read() }
 
     #[inline(always)]
-    pub fn absolute_offset(self) -> u16 { self.absolute_offset.read() }
+    pub fn inverted(&self) -> bool { self.inverted.read() }
+
+    #[inline(always)]
+    pub fn absolute_offset(&self) -> u16 { self.absolute_offset.read() }
 
     #[inline(always)]
     pub fn absolute_position(self) -> u16 {
@@ -100,10 +96,10 @@ where
     pub fn toggle_inverted(&mut self) { self.inverted.update(|val_ref| *val_ref = !(*val_ref)); }
 
     #[inline(always)]
-    pub fn set_count(&mut self, new_count: i32) { self.count.update(|val_ref| *val_ref = new_count); }
+    pub fn set_ticks(&mut self, new_count: i32) { self.ticks.update(|val_ref| *val_ref = new_count); }
 
     #[inline(always)]
-    pub fn reset_count(&mut self) { self.set_count(0); }
+    pub fn reset_count(&mut self) { self.set_ticks(0); }
 
     // this will always be called from the exti interrupt
     pub fn handle_encoder_interrupt(&mut self) {
@@ -127,7 +123,7 @@ where
             // this is bad, send error message or something
         } else {
             let inverted = self.inverted.read();
-            self.count.update(|val_ref| *val_ref += if !inverted { increment } else { -increment });
+            self.ticks.update(|val_ref| *val_ref += if !inverted { increment } else { -increment });
         }
         self.prev_gpio_value = current_gpio_value;
 
