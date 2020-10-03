@@ -83,11 +83,6 @@ pool!(
     StatusPool: status::LedStateTriple
 );
 
-fn alloc_frame(id: can::Id, data: &[u8]) -> Box<CanTXPool, Init> {
-    let frame_box = CanTXPool::alloc().unwrap();
-    frame_box.init(can::Frame::new(id, data))
-}
-
 // waiting for the CAN API to be released
 // https://github.com/stm32-rs/stm32f1xx-hal/pull/215
 // for now, we will use my janky hal branch
@@ -239,11 +234,11 @@ const APP: () = {
         CAN_id += (gpiob.pb14.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 0;
         CAN_id += (gpiob.pb13.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 1;
         CAN_id += (gpiob.pb12.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 2;
-        CAN_id += (gpiob.pb2.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 3;
-        CAN_id += (gpiob.pb1.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 4;
-        CAN_id += (gpiob.pb0.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 5;
-        CAN_id += (gpioa.pa4.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u32) << 6;
-        CAN_id += (gpioa.pa3.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u32) << 7;
+        CAN_id += (gpiob.pb2. into_pull_down_input(&mut gpiob.crl).is_high().unwrap() as u32) << 3;
+        CAN_id += (gpiob.pb1. into_pull_down_input(&mut gpiob.crl).is_high().unwrap() as u32) << 4;
+        CAN_id += (gpiob.pb0. into_pull_down_input(&mut gpiob.crl).is_high().unwrap() as u32) << 5;
+        CAN_id += (gpioa.pa4. into_pull_down_input(&mut gpioa.crl).is_high().unwrap() as u32) << 6;
+        CAN_id += (gpioa.pa3. into_pull_down_input(&mut gpioa.crl).is_high().unwrap() as u32) << 7;
 
         let CAN_id = can::Id::new_standard(CAN_id);
 
@@ -418,14 +413,31 @@ const APP: () = {
                 },
                 FrameIdentifier::SetPolarity => {
                     let parsed_frame: Option<SetPolarityFrame> = frame.deref().try_into().ok();
+                    
+                    let res: Result<(), ()> = match parsed_frame {
+                        Some(f) => {
+                            encoder.lock(|encoder| encoder.set_inverted(f.polarity()));
+                            Ok(())
+                        },
+                        None => {Err(())}
+                    };
 
 
-
-                    Ok(())
+                    res
                 },
                 FrameIdentifier::SetAbsoluteOffset => {
+                    let parsed_frame: Option<SetAbsoluteOffsetFrame> = frame.deref().try_into().ok();
+                    
+                    let res: Result<(), ()> = match parsed_frame {
+                        Some(f) => {
+                            encoder.lock(|encoder| encoder.set_absolute_offset(f.offset()));
+                            Ok(())
+                        },
+                        None => {Err(())}
+                    };
 
-                    Ok(())
+
+                    res
                 },
                 _ => { Err(()) }
             };
@@ -506,12 +518,19 @@ const APP: () = {
         rtic::pend(Interrupt::USB_LP_CAN_RX0);
     }
 
+
+
     extern "C" {
         // delcare unused interrupts here so that RTIC can use them
         
         fn USART1();
         fn USART2();
         fn USART3();
+
+        fn CAN2();
+        
+        fn SPI2();
+        fn SPI3();
 
     }
 

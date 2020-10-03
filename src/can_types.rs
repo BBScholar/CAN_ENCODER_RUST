@@ -177,6 +177,17 @@ pub struct SetPolarityFrame {
     polarity: bool
 }
 
+impl SetPolarityFrame {
+
+
+    #[inline(always)]
+    pub fn id(&self) -> can::Id { self.id }
+
+    #[inline(always)]
+    pub fn polarity(&self) -> bool { self.polarity }
+
+}
+
 impl TryFrom<&can::Frame> for SetPolarityFrame {
     type Error = ();
 
@@ -196,6 +207,17 @@ impl TryFrom<&can::Frame> for SetPolarityFrame {
 pub struct SetAbsoluteOffsetFrame {
     id: can::Id,
     offset: u16
+}
+
+impl SetAbsoluteOffsetFrame {
+
+
+    #[inline(always)]
+    pub fn id(&self) -> can::Id { self.id }
+
+    #[inline(always)]
+    pub fn offset(&self) -> u16 { self.offset }
+
 }
 
 impl TryFrom<&can::Frame> for SetAbsoluteOffsetFrame {
