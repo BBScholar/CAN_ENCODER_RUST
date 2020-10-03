@@ -1,7 +1,10 @@
 
 use stm32f1xx_hal::gpio;
 
-pub enum LedState { On, Off, FlashSlow, FlashFast, NoSet }
+use crate::hardware_types::{StatusLed1, StatusLed2, StatusLed3};
+
+#[allow(dead_code)]
+pub enum LedState { On, Off, FlashSlow, FlashFast, DontSet }
 
 pub struct LedStateTriple(LedState, LedState, LedState);
 
@@ -13,19 +16,19 @@ impl LedStateTriple {
 pub type StatusPin = gpio::Pxx<gpio::Output<gpio::PushPull>>;
 
 pub struct StatusHandler {
-    status1: StatusPin,
-    status2: StatusPin,
-    status3: StatusPin,
+    status1: StatusLed1,
+    status2: StatusLed2,
+    status3: StatusLed3,
     current_status: LedStateTriple
 }
 
 impl StatusHandler {
     
-    pub fn new(status1: StatusPin, status2: StatusPin, status3: StatusPin) -> Self {
+    pub fn new(status1: StatusLed1, status2: StatusLed2, status3: StatusLed3) -> Self {
         Self::new_with_status(status1, status2, status3, LedStateTriple::OFF)
     }
 
-    pub fn new_with_status(status1: StatusPin, status2: StatusPin, status3: StatusPin, led_status: LedStateTriple) -> Self {
+    pub fn new_with_status(status1: StatusLed1, status2: StatusLed2, status3: StatusLed3, led_status: LedStateTriple) -> Self {
         StatusHandler {
             status1, status2, status3, current_status: led_status
         }

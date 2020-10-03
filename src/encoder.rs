@@ -13,6 +13,7 @@ use crate::hardware_types::{
     EncoderChannelA, EncoderChannelB, EncoderChannelI
 };
 
+#[allow(dead_code)]
 pub enum Address {
 
     // Volatile
@@ -32,10 +33,12 @@ pub enum Address {
     RED       = 0x001A
 }
 
+#[allow(dead_code)]
 pub struct Settings {
     zero_offset: u16
 }
 
+#[allow(dead_code)]
 struct Diagnostics {
 
 }
@@ -90,16 +93,21 @@ where
     }
 
     #[inline(always)]
+    pub fn set_ticks(&mut self, new_count: i32) { self.ticks.update(|val_ref| *val_ref = new_count); }
+
+    #[inline(always)]
+    pub fn reset_ticks(&mut self) { self.set_ticks(0); }
+
+    #[inline(always)]
     pub fn set_inverted(&mut self, new_polarity: bool) { self.inverted.update(|val_ref| *val_ref = new_polarity); }
 
     #[inline(always)]
     pub fn toggle_inverted(&mut self) { self.inverted.update(|val_ref| *val_ref = !(*val_ref)); }
 
     #[inline(always)]
-    pub fn set_ticks(&mut self, new_count: i32) { self.ticks.update(|val_ref| *val_ref = new_count); }
+    pub fn set_absolute_offset(&mut self, offset: u16) { self.absolute_offset.update(|val_ref| *val_ref = offset); }
 
-    #[inline(always)]
-    pub fn reset_count(&mut self) { self.set_ticks(0); }
+   
 
     // this will always be called from the exti interrupt
     pub fn handle_encoder_interrupt(&mut self) {

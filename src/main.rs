@@ -57,12 +57,15 @@ use core::convert::{
     Into, TryInto
 };
 
+use core::ops::{
+    Deref
+};
+
 const HSE_CLOCK_MHZ: u32 = 8;
 const SYSTEM_CLOCK_MHZ: u32 = 72;
 const SYSTEM_CLOCK: u32 = SYSTEM_CLOCK_MHZ * 1E6 as u32; // hz
-const SECONDS_PER_CYCLE: f32 = 1.0 / SYSTEM_CLOCK as f32; // seconds
 
-// type definitions 
+const QUEUE_MEMORY_SIZE: usize = 512;
 
 // memory pools
 pool!(
@@ -102,7 +105,7 @@ const APP: () = {
         #[init(false)]
         CAN_ok: bool,
 
-        CAN_id: u8,
+        CAN_id: can::Id,
 
         can_tx: can::Tx<pac::CAN1>,
         can_tx_queue: BinaryHeap<Box<CanTXPool>, U8, Min>,
@@ -161,7 +164,7 @@ const APP: () = {
         let status2: hardware_types::StatusLed2 = status2.into_push_pull_output_with_state(&mut gpiob.crl, gpio::State::Low);
         let status3: hardware_types::StatusLed3 = status3.into_push_pull_output_with_state(&mut gpiob.crl, gpio::State::Low);
 
-        let status_handler = status::StatusHandler::new(status1.downgrade(), status2.downgrade(), status3.downgrade());
+        let status_handler = status::StatusHandler::new(status1, status2, status3);
 
         // power sense
         let power_sense: hardware_types::PowerSense = gpiob.pb15.into_floating_input(&mut gpiob.crh);
@@ -232,15 +235,17 @@ const APP: () = {
 
         // calculate CAN id
         // we don't need to hold references to the pins as we only use them on startup
-        let mut CAN_id: u8 = 0;
-        CAN_id += (gpiob.pb14.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u8) << 0;
-        CAN_id += (gpiob.pb13.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u8) << 1;
-        CAN_id += (gpiob.pb12.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u8) << 2;
-        CAN_id += (gpiob.pb2.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u8) << 3;
-        CAN_id += (gpiob.pb1.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u8) << 4;
-        CAN_id += (gpiob.pb0.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u8) << 5;
-        CAN_id += (gpioa.pa4.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u8) << 6;
-        CAN_id += (gpioa.pa3.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u8) << 7;
+        let mut CAN_id: u32 = 0;
+        CAN_id += (gpiob.pb14.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 0;
+        CAN_id += (gpiob.pb13.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 1;
+        CAN_id += (gpiob.pb12.into_pull_down_input(&mut gpiob.crh).is_high().unwrap() as u32) << 2;
+        CAN_id += (gpiob.pb2.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 3;
+        CAN_id += (gpiob.pb1.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 4;
+        CAN_id += (gpiob.pb0.into_pull_down_input(&mut gpiob.crl) .is_high().unwrap() as u32) << 5;
+        CAN_id += (gpioa.pa4.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u32) << 6;
+        CAN_id += (gpioa.pa3.into_pull_down_input(&mut gpioa.crl) .is_high().unwrap() as u32) << 7;
+
+        let CAN_id = can::Id::new_standard(CAN_id);
 
         // init can
         // the CAN and the USB periphs share SRAM, so we need to take ownership of both here to avoid errors
@@ -248,7 +253,7 @@ const APP: () = {
         let can_pins = (gpiob.pb9.into_alternate_push_pull(&mut gpiob.crh), gpiob.pb8.into_floating_input(&mut gpiob.crh));
         can.assign_pins(can_pins, &mut afio.mapr);
         // TODO: Configure this
-        can.configure(|config| {
+        can.configure(|_config| {
             // config.
 
         });
@@ -256,8 +261,8 @@ const APP: () = {
         let mut filters = can.split_filters().unwrap();
 
         // filter any undesired CAN ids
-        filters.add(&can::Filter::new_standard(CAN_id as u32).with_mask(0)).unwrap();
-        filters.add(&can::Filter::new_extended(CAN_id as u32).with_mask(0)).unwrap();
+        filters.add(&can::Filter::new_standard(CAN_id.as_u32()).with_mask(0)).unwrap();
+        filters.add(&can::Filter::new_extended(CAN_id.as_u32()).with_mask(0)).unwrap();
 
         let mut can_rx = can.take_rx(filters).unwrap();
         can_rx.enable_interrupts();
@@ -311,7 +316,7 @@ const APP: () = {
         cx.resources.encoder.handle_encoder_interrupt();
     }
 
-    #[task(resources=[power_ok, power_sense], schedule=[low_power], spawn=[mem_tx])]
+    #[task(priority = 1, resources=[power_ok, power_sense], schedule=[low_power], spawn=[mem_tx])]
     fn low_power(cx: low_power::Context) {
         // run this at 200 hz? 500 hz?
         // check for shutdown condition and store data
@@ -322,7 +327,7 @@ const APP: () = {
         let power_ok = || power_sense.is_high().unwrap();
         if !power_ok() {
             // spawn an i2c write task
-            cx.spawn.mem_tx();
+            cx.spawn.mem_tx().unwrap();
 
             // block till power is ok again
             while !power_ok() { cortex_m::asm::nop(); }
@@ -330,7 +335,7 @@ const APP: () = {
 
         // schedule this at 500hz
         let now = Instant::now();
-        cx.schedule.low_power(now + (SYSTEM_CLOCK / 500).cycles());
+        cx.schedule.low_power(now + (SYSTEM_CLOCK / 500).cycles()).unwrap();
     }
 
     #[task(resources=[eeprom, encoder])]
@@ -341,11 +346,14 @@ const APP: () = {
         let mut encoder = cx.resources.encoder;
 
         // get variables
-        let ticks = encoder.ticks();
-        let inverted = encoder.inverted();
-        let absolute_offset = encoder.absolute_offset();
+        let (ticks, inverted, absolute_offset) = encoder.lock(|encoder| {
+            (
+                encoder.ticks(),
+                encoder.inverted(),
+                encoder.absolute_offset(),
+            )
+        });
 
-        // write to eeprom
         eeprom.write_data(memory::Address::Ticks as u8, ticks);
         eeprom.write_bool(memory::Address::Polarity as u8, inverted);
         eeprom.write_data(memory::Address::AbsoluteOffset as u8, absolute_offset);
@@ -356,11 +364,19 @@ const APP: () = {
         // Recieve data from eeprom memory
         // this will be called on shutdown
         let eeprom = cx.resources.eeprom;
-        let _encoder = cx.resources.encoder;
+        let mut encoder = cx.resources.encoder;
 
-        let _ticks: i32 = eeprom.read_data(memory::Address::Ticks as u8);
-        let _inverted: bool = eeprom.read_bool(memory::Address::Polarity as u8);
-        let _absolute_offset: u16 = eeprom.read_data(memory::Address::AbsoluteOffset as u8);
+        let ticks = eeprom.read_data(memory::Address::Ticks as u8);
+        let inverted = eeprom.read_bool(memory::Address::Polarity as u8);
+        let absolute_offset = eeprom.read_data(memory::Address::AbsoluteOffset as u8);
+
+
+        encoder.lock(|encoder| {
+            encoder.set_ticks(ticks);
+            encoder.set_inverted(inverted);
+            encoder.set_absolute_offset(absolute_offset);
+        });
+
     }
 
     #[task(resources=[can_rx_queue, can_tx_queue, CAN_id, encoder], schedule=[handle_can_rx])]
@@ -370,14 +386,14 @@ const APP: () = {
         let rx_queue = cx.resources.can_rx_queue;
         let tx_queue = cx.resources.can_tx_queue;
         
-        let encoder: encoder::Encoder<hardware_types::SPI> = cx.resources.encoder;
+        let mut encoder = cx.resources.encoder;
 
         // call this at 20hz
         // probably want to lock queue here
-        while let Some(frame) = rx_queue.pop() {
+        while let Some(frame) = &rx_queue.pop() {
 
-            // ignore frames without out CAN id
-            if frame.id().as_u32() != (*cx.resources.CAN_id as u32) { continue; }
+            // ignore frames without out CAN id (We may be able to delete this because of CAN filters)
+            if frame.id().as_u32() != (cx.resources.CAN_id.as_u32()) { continue; }
             //  ignore frames with 0 length
             if frame.dlc() == 0 { continue; }
             // get frame ident in order to match
@@ -385,30 +401,52 @@ const APP: () = {
 
             let result = match ident {
                 FrameIdentifier::SetTicks => {
-                    let parsed_frame: SetTicksFrame = (*frame).try_into().unwrap();
-                    let ticks = parsed_frame.ticks();
-                    encoder.set_ticks(ticks);
-                    Ok(())
+                    let parsed_frame: Option<SetTicksFrame> = frame.deref().try_into().ok();
+
+                    let res: Result<(), ()> =  match parsed_frame {
+                        Some(f) => {
+                            let ticks = f.ticks();
+                            encoder.lock(|encoder| encoder.set_ticks(ticks));
+                            Ok(())
+                        },
+                        None => {
+                            Err(())
+                        }
+                    };
+
+                    res   
                 },
                 FrameIdentifier::SetPolarity => {
+                    let parsed_frame: Option<SetPolarityFrame> = frame.deref().try_into().ok();
+
+
 
                     Ok(())
                 },
                 FrameIdentifier::SetAbsoluteOffset => {
 
                     Ok(())
-                }
+                },
+                _ => { Err(()) }
             };
 
-            if result.is_err() {
-                // add a "BAD FRAME" error to CAN tx queue
+            match result {
+                Ok(_) => {},
+                Err(()) => {
+                    use can_types::{
+                        GetErrorFrame,
+                        ErrorCode
+                    };
+                    let error_frame = GetErrorFrame::new(*cx.resources.CAN_id, ErrorCode::BadCanFrame);
+                    tx_queue.push(CanTXPool::alloc().unwrap().init(error_frame.try_into().unwrap())).unwrap();
+                }
             }
 
 
         }
 
         let now = Instant::now();
-        cx.schedule.handle_can_rx(now + (SYSTEM_CLOCK / 20).cycles());
+        cx.schedule.handle_can_rx(now + (SYSTEM_CLOCK / 20).cycles()).unwrap();
     }
 
 
@@ -442,7 +480,7 @@ const APP: () = {
 
         // schedule itself at 20hz
         let now = Instant::now();
-        cx.schedule.can_tx(now + (SYSTEM_CLOCK / 20).cycles());
+        cx.schedule.can_tx(now + (SYSTEM_CLOCK / 20).cycles()).unwrap();
     }
 
     #[task(binds = USB_LP_CAN_RX0, resources=[can_rx, can_rx_queue, can_rx_count])]
