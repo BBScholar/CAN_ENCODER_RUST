@@ -1,19 +1,19 @@
+#![allow(dead_code)]
 
-use stm32f1xx_hal::gpio;
+#[allow(unused_imports)]
+use embedded_hal::digital::v2::OutputPin;
 
 use crate::hardware_types::{StatusLed1, StatusLed2, StatusLed3};
 
 #[allow(dead_code)]
-pub enum LedState { On, Off, FlashSlow, FlashFast, DontSet }
+pub enum LedState { On, Off, FlashSlow, FlashFast }
 
 pub struct LedStateTriple(LedState, LedState, LedState);
 
 impl LedStateTriple {
     const OFF: LedStateTriple = LedStateTriple { 0: LedState::Off, 1: LedState::Off, 2: LedState::Off };
-    const ON: LedStateTriple = LedStateTriple  { 0: LedState::On,  1: LedState::On,  2: LedState::On  };
-}
+    const ON: LedStateTriple = LedStateTriple  { 0: LedState::On,  1: LedState::On,  2: LedState::On  };}
 
-pub type StatusPin = gpio::Pxx<gpio::Output<gpio::PushPull>>;
 
 pub struct StatusHandler {
     status1: StatusLed1,

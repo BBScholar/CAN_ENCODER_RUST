@@ -1,6 +1,5 @@
 use stm32f1xx_hal::{
     spi::SpiReadWrite,
-    gpio,
     gpio::ExtiPin,
     spi::FullDuplex
 };
@@ -51,6 +50,8 @@ pub struct Encoder<SPI> {
     a: EncoderChannelA,
     b: EncoderChannelB,
     i: EncoderChannelI,
+
+    #[allow(dead_code)]
     spi: SPI
 }
 

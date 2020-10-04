@@ -18,16 +18,6 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 use cortex_m::peripheral::DWT;
 // use cortex_m_semihosting::hprintln;
 
-use heapless::{
-    consts::*,
-    binary_heap::{BinaryHeap, Min},
-    pool,
-    pool::{
-        Init,
-        singleton::{Box, Pool}
-    }
-};
-
 #[allow(unused_imports)]
 use embedded_hal::digital::v2::{
     OutputPin,
@@ -61,27 +51,21 @@ use core::ops::{
     Deref
 };
 
+extern crate static_assertions as sa;
+
+// size of can::Frame is 16 bytes
+sa::assert_eq_size!(can::Frame, [u8; 4 + 8 + 4]);
+
+
 const HSE_CLOCK_MHZ: u32 = 8;
 const SYSTEM_CLOCK_MHZ: u32 = 72;
 const SYSTEM_CLOCK: u32 = SYSTEM_CLOCK_MHZ * 1E6 as u32; // hz
 
-const QUEUE_MEMORY_SIZE: usize = 512;
+// Size of 32 element frame queue is 16 * 32 = 512 bytes
+type Queue<T> = heapless::mpmc::Q32<T>;
+type FrameQueue = Queue<can::Frame>;
+type StatusQueue = Queue<status::LedStateTriple>;
 
-// memory pools
-pool!(
-    #[allow(non_upper_case_globals)]
-    CanTXPool: can::Frame
-);
-
-pool!(
-    #[allow(non_upper_case_globals)]
-    CanRXPool: can::Frame
-);
-
-pool!(
-    #[allow(non_upper_case_globals)]
-    StatusPool: status::LedStateTriple
-);
 
 // waiting for the CAN API to be released
 // https://github.com/stm32-rs/stm32f1xx-hal/pull/215
@@ -103,14 +87,17 @@ const APP: () = {
         CAN_id: can::Id,
 
         can_tx: can::Tx<pac::CAN1>,
-        can_tx_queue: BinaryHeap<Box<CanTXPool>, U8, Min>,
+        can_tx_queue: FrameQueue,
         #[init(0)]
         can_tx_count: usize,
 
         can_rx: can::Rx<pac::CAN1>,
-        can_rx_queue: BinaryHeap<Box<CanRXPool>, U8, Min>,
+        can_rx_queue: FrameQueue,
         #[init(0)]
         can_rx_count: usize,
+
+        // status queue
+        status_queue: StatusQueue,
 
         // hardware
         status_handler: status::StatusHandler,
@@ -122,10 +109,6 @@ const APP: () = {
 
     #[init(schedule=[can_tx, low_power])]
     fn init(cx: init::Context) -> init::LateResources {
-        // memory init
-        static mut CAN_TX_MEMORY: [u8; 256] = [0; 256];
-        static mut CAN_RX_MEMORY: [u8; 256] = [0; 256];
-
         // hardware init
         let mut peripherals: rtic::Peripherals = cx.core;
         let device: stm32f1xx_hal::stm32::Peripherals = cx.device;
@@ -163,7 +146,6 @@ const APP: () = {
 
         // power sense
         let power_sense: hardware_types::PowerSense = gpiob.pb15.into_floating_input(&mut gpiob.crh);
-        // TODO: set interrupt for this maybe?
 
         // encoder pins (need to configure interrupts for this)
         let mut encoder_a: hardware_types::EncoderChannelA = gpioa.pa8.into_pull_down_input(&mut gpioa.crh);
@@ -265,11 +247,12 @@ const APP: () = {
         let mut can_tx = can.take_tx().unwrap();
         can_tx.enable_interrupt();
 
-        let can_tx_queue = BinaryHeap::new();
-        CanTXPool::grow(CAN_TX_MEMORY);
+        let can_tx_queue = FrameQueue::new();
 
-        let can_rx_queue = BinaryHeap::new();
-        CanRXPool::grow(CAN_RX_MEMORY);
+        let can_rx_queue = FrameQueue::new();
+
+        let status_queue = StatusQueue::new();
+        
 
         can.enable().ok();
 
@@ -279,7 +262,6 @@ const APP: () = {
         peripherals.DWT.enable_cycle_counter();
 
         let now = cx.start;
-        // hprintln!("init @ {:?}", now).unwrap();
 
         // schedule can tx
         cx.schedule.can_tx(now + (SYSTEM_CLOCK / 20).cycles()).unwrap();
@@ -293,6 +275,7 @@ const APP: () = {
             can_tx_queue,
             can_rx,
             can_rx_queue,
+            status_queue,
             status_handler,
             power_sense,
             encoder,
@@ -385,7 +368,7 @@ const APP: () = {
 
         // call this at 20hz
         // probably want to lock queue here
-        while let Some(frame) = &rx_queue.pop() {
+        while let Some(frame) = &rx_queue.dequeue() {
 
             // ignore frames without out CAN id (We may be able to delete this because of CAN filters)
             if frame.id().as_u32() != (cx.resources.CAN_id.as_u32()) { continue; }
@@ -450,7 +433,7 @@ const APP: () = {
                         ErrorCode
                     };
                     let error_frame = GetErrorFrame::new(*cx.resources.CAN_id, ErrorCode::BadCanFrame);
-                    tx_queue.push(CanTXPool::alloc().unwrap().init(error_frame.try_into().unwrap())).unwrap();
+                    tx_queue.enqueue(error_frame.try_into().unwrap()).unwrap();
                 }
             }
 
@@ -472,18 +455,10 @@ const APP: () = {
         // we won't use an interrupt for now, just send all messages in queue at 20hz
         // tx.clear_interrupt_flags();
 
-        while let Some(frame) = tx_queue.peek() {
+        while let Some(frame) = tx_queue.dequeue() {
             match tx.transmit(&frame) {
                 Ok(None) => {
-                    tx_queue.pop();
                     *cx.resources.can_tx_count += 1;
-                }
-                Ok(pending_frame) => {
-                    // make sure we send the frame with the highest priority
-                    tx_queue.pop();
-                    if let Some(frame) = pending_frame {
-                        tx_queue.push(CanTXPool::alloc().unwrap().init(frame)).unwrap();
-                    }
                 }
                 Err(nb::Error::WouldBlock) => break,
                 _ => unreachable!(),
@@ -503,7 +478,7 @@ const APP: () = {
         loop {
             match rx.receive() {
                 Ok(frame) => {
-                    rx_queue.push(CanRXPool::alloc().unwrap().init(frame)).unwrap();
+                    rx_queue.enqueue(frame).unwrap();
                     *cx.resources.can_rx_count += 1;
                 }
                 Err(nb::Error::WouldBlock) => break,
@@ -517,6 +492,16 @@ const APP: () = {
         // Jump to the other interrupt handler which handles both RX fifos.
         rtic::pend(Interrupt::USB_LP_CAN_RX0);
     }
+
+    #[task(resources=[status_handler], schedule=[update_status])]
+    fn update_status(cx: update_status::Context) {
+        let _status_handler = cx.resources.status_handler;
+
+        // call at 8 hz
+        cx.schedule.update_status(Instant::now() + (SYSTEM_CLOCK / 8).cycles()).unwrap();
+    }
+
+    
 
 
 

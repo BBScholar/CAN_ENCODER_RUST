@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 
 use stm32f1xx_hal::can;
 

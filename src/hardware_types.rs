@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 
 use stm32f1xx_hal::{
     gpio, spi, pac, i2c
@@ -7,6 +8,8 @@ use stm32f1xx_hal::{
 pub type StatusLed1 = gpio::gpiob::PB5<gpio::Output<gpio::PushPull>>;
 pub type StatusLed2 = gpio::gpiob::PB4<gpio::Output<gpio::PushPull>>;
 pub type StatusLed3 = gpio::gpiob::PB3<gpio::Output<gpio::PushPull>>;
+
+pub type StatusPin = gpio::Pxx<gpio::Output<gpio::PushPull>>;
 
 // Power Sense
 pub type PowerSense = gpio::gpiob::PB15<gpio::Input<gpio::Floating>>;
