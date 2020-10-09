@@ -40,9 +40,6 @@ use stm32f1xx_hal::{
 use rtic::app;
 use rtic::cyccnt::{Instant, U32Ext as _};
 
-#[allow(unused_imports)]
-use micromath::F32Ext;
-
 use core::convert::{
     Into, TryInto
 };
@@ -50,6 +47,8 @@ use core::convert::{
 use core::ops::{
     Deref
 };
+
+use cortex_m_rt::{entry, exception, ExceptionFrame};
 
 extern crate static_assertions as sa;
 
@@ -61,11 +60,10 @@ const HSE_CLOCK_MHZ: u32 = 8;
 const SYSTEM_CLOCK_MHZ: u32 = 72;
 const SYSTEM_CLOCK: u32 = SYSTEM_CLOCK_MHZ * 1E6 as u32; // hz
 
-// Size of 32 element frame queue is 16 * 32 = 512 bytes
+// Size of 32 element frame queue is 16 bytes * 32 elements = 512 bytes
 type Queue<T> = heapless::mpmc::Q32<T>;
 type FrameQueue = Queue<can::Frame>;
 type StatusQueue = Queue<status::LedStateTriple>;
-
 
 // waiting for the CAN API to be released
 // https://github.com/stm32-rs/stm32f1xx-hal/pull/215
@@ -222,7 +220,7 @@ const APP: () = {
         CAN_id += (gpioa.pa4. into_pull_down_input(&mut gpioa.crl).is_high().unwrap() as u32) << 6;
         CAN_id += (gpioa.pa3. into_pull_down_input(&mut gpioa.crl).is_high().unwrap() as u32) << 7;
 
-        let CAN_id = can::Id::new_standard(CAN_id);
+        let CAN_id = can::Id::Standard(CAN_id);
 
         // init can
         // the CAN and the USB periphs share SRAM, so we need to take ownership of both here to avoid errors
@@ -238,8 +236,14 @@ const APP: () = {
         let mut filters = can.split_filters().unwrap();
 
         // filter any undesired CAN ids
-        filters.add(&can::Filter::new_standard(CAN_id.as_u32()).with_mask(0)).unwrap();
-        filters.add(&can::Filter::new_extended(CAN_id.as_u32()).with_mask(0)).unwrap();
+        {
+            let can::Id::Standard(value) = CAN_id;
+            let extended = can::Id::Extended(value);
+
+            filters.add(&can::Filter::new(CAN_id).with_mask(0)).unwrap();
+            filters.add(&can::Filter::new(extended).with_mask(0)).unwrap();
+        }
+        
 
         let mut can_rx = can.take_rx(filters).unwrap();
         can_rx.enable_interrupts();
@@ -371,7 +375,7 @@ const APP: () = {
         while let Some(frame) = &rx_queue.dequeue() {
 
             // ignore frames without out CAN id (We may be able to delete this because of CAN filters)
-            if frame.id().as_u32() != (cx.resources.CAN_id.as_u32()) { continue; }
+            if frame.id() != (*cx.resources.CAN_id) { continue; }
             //  ignore frames with 0 length
             if frame.dlc() == 0 { continue; }
             // get frame ident in order to match
@@ -466,8 +470,7 @@ const APP: () = {
         }
 
         // schedule itself at 20hz
-        let now = Instant::now();
-        cx.schedule.can_tx(now + (SYSTEM_CLOCK / 20).cycles()).unwrap();
+        cx.schedule.can_tx(Instant::now() + (SYSTEM_CLOCK / 20).cycles()).unwrap();
     }
 
     #[task(binds = USB_LP_CAN_RX0, resources=[can_rx, can_rx_queue, can_rx_count])]
@@ -500,9 +503,6 @@ const APP: () = {
         // call at 8 hz
         cx.schedule.update_status(Instant::now() + (SYSTEM_CLOCK / 8).cycles()).unwrap();
     }
-
-    
-
 
 
     extern "C" {

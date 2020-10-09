@@ -11,6 +11,12 @@ use core::convert::{
     Into, TryInto, TryFrom
 };
 
+pub trait TryIntoWith<T, U> { //: TryInto<T> {
+
+    fn try_into(self, u: U) ->  Result<T, ()>;
+
+}
+
 pub enum FrameIdentifier {
 
     // output frames
@@ -51,74 +57,75 @@ pub enum ErrorCode {
     SpiFault = 4
 }
 
+#[derive(Clone)]
 pub struct TickFrame {
-    id: can::Id,
     ticks: i32,
     absolute_position: u16 // check if we have room for this
 }
 
 impl TickFrame {
 
-    fn new(id: can::Id, ticks: i32, absolute_position: u16) -> Self {
+    fn new(ticks: i32, absolute_position: u16) -> Self {
         TickFrame {
-            id, ticks, absolute_position
+            ticks, absolute_position
         }
     }
 
 }
 
-impl Into<can::Frame> for TickFrame {
+impl TryIntoWith<can::Frame, can::Id> for TickFrame {
 
-    fn into(self) -> can::Frame {
+    fn try_into(self, id: can::Id) -> Result<can::Frame, ()> {
         let mut buf = heapless::Vec::<u8, U8>::new();
         buf.push(FrameIdentifier::GetTicks as u8).unwrap();
         buf.extend_from_slice(&self.ticks.to_ne_bytes()).unwrap();
         buf.extend_from_slice(&self.absolute_position.to_ne_bytes()).unwrap();
-        can::Frame::new(self.id, &buf)
+        can::Frame::new(id, &buf)
     }
 
 }
 
+
 pub struct GetErrorFrame {
-    id: can::Id,
     error_code: u32
 }
 
 impl GetErrorFrame {
 
-    pub fn new_from_u32(id: can::Id, error_code: u32) -> Self {
+    pub fn new_from_u32(error_code: u32) -> Self {
         GetErrorFrame {
-            id, error_code
+            error_code
         }
     }
 
-    pub fn new(id: can::Id, error_code: ErrorCode) -> Self {
-        Self::new_from_u32(id, error_code as u32)
+    pub fn new(error_code: ErrorCode) -> Self {
+        Self::new_from_u32(error_code as u32)
     }
 
 }
 
-impl Into<can::Frame> for GetErrorFrame {
+impl TryIntoWith<can::Frame, can::Id> for GetErrorFrame {
 
-    fn into(self) -> can::Frame {
+    fn try_into(self, id: can::Id) -> Result<can::Frame, ()> {
         let mut buf = heapless::Vec::<u8, U8>::new();
         buf.push(FrameIdentifier::GetError as u8).unwrap();
         buf.extend_from_slice(&self.error_code.to_ne_bytes()).unwrap();
-        can::Frame::new(self.id, &buf)
+        can::Frame::new(id, &buf)
     }
 
 }
 
+
+
 pub struct GetDebugFrame {
-    id: can::Id,
     data: [u8; 7]
 }
 
 impl GetDebugFrame {
 
-    pub fn new(id: can::Id, data: [u8; 7]) -> Self {
+    pub fn new(data: [u8; 7]) -> Self {
         GetDebugFrame {
-            id, data
+            data
         }
     }
 
@@ -134,6 +141,7 @@ impl Into<can::Frame> for GetDebugFrame {
     }
 
 }
+
 
 pub struct SetTicksFrame {
     id: can::Id,
@@ -206,15 +214,10 @@ impl TryFrom<&can::Frame> for SetPolarityFrame {
 }
 
 pub struct SetAbsoluteOffsetFrame {
-    id: can::Id,
     offset: u16
 }
 
 impl SetAbsoluteOffsetFrame {
-
-
-    #[inline(always)]
-    pub fn id(&self) -> can::Id { self.id }
 
     #[inline(always)]
     pub fn offset(&self) -> u16 { self.offset }
