@@ -11,44 +11,17 @@ use core::convert::{
     Into, TryInto, TryFrom
 };
 
+use core::ops::Deref;
+
 pub trait TryIntoWith<T, U> { //: TryInto<T> {
 
-    fn try_into(self, u: U) ->  Result<T, ()>;
-
-}
-
-pub enum FrameIdentifier {
-
-    // output frames
-    GetError = 0,
-    GetTicks = 1,
-    GetDebug = 2,
-
-    // input frame
-    SetTicks = 3,
-    SetPolarity = 4,
-    SetAbsoluteOffset = 5,
-
-}
-
-impl TryFrom<u8> for FrameIdentifier {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        return match value {
-            0 => Ok(Self::GetError),
-            1 => Ok(Self::GetTicks),
-            2 => Ok(Self::GetDebug),
-            3 => Ok(Self::SetTicks),
-            4 => Ok(Self::SetPolarity),
-            5 => Ok(Self::SetAbsoluteOffset),
-            _ => Err(()) 
-        }
-    }
+    fn try_into_with(self, u: U) ->  Result<T, ()>;
 
 }
 
 #[allow(dead_code)] // TODO: remove this
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum ErrorCode {
     None = 0,
     BadCanFrame = 1,
@@ -57,190 +30,142 @@ pub enum ErrorCode {
     SpiFault = 4
 }
 
-#[derive(Clone)]
-pub struct TickFrame {
-    ticks: i32,
-    absolute_position: u16 // check if we have room for this
+
+#[derive(Clone, Copy)]
+pub enum Frame {
+
+    // output frames
+    GetTicks { relative: i32, absolute: u16 },
+    GetError { error_code: u8 },
+    GetDebug { data: [u8; 7] },
+
+    // input frames
+    SetTicks { ticks: i32 },
+    SetPolarity { inverted: bool },
+    SetAbsoluteOffset { offset: u16 },
+
+    // memory operations
+    SaveToMemory,
+    ClearMemory
+
 }
 
-impl TickFrame {
+impl Into<u8> for Frame {
 
-    fn new(ticks: i32, absolute_position: u16) -> Self {
-        TickFrame {
-            ticks, absolute_position
+    fn into(self) -> u8 {
+        match self {
+            Self::GetError {error_code: _ }              => 0,
+            Self::GetTicks {relative: _, absolute: _} => 1,
+            Self::GetDebug { data: _ }              => 2,
+
+            Self::SetTicks { ticks: _}                  => 3,
+            Self::SetPolarity { inverted: _ }          => 4,
+            Self::SetAbsoluteOffset { offset: _}        => 5,
+
+            Self::SaveToMemory                            => 6,
+            Self::ClearMemory                             => 7
         }
     }
 
 }
 
-impl TryIntoWith<can::Frame, can::Id> for TickFrame {
-
-    fn try_into(self, id: can::Id) -> Result<can::Frame, ()> {
-        let mut buf = heapless::Vec::<u8, U8>::new();
-        buf.push(FrameIdentifier::GetTicks as u8).unwrap();
-        buf.extend_from_slice(&self.ticks.to_ne_bytes()).unwrap();
-        buf.extend_from_slice(&self.absolute_position.to_ne_bytes()).unwrap();
-        can::Frame::new(id, &buf)
-    }
-
-}
-
-
-pub struct GetErrorFrame {
-    error_code: u32
-}
-
-impl GetErrorFrame {
-
-    pub fn new_from_u32(error_code: u32) -> Self {
-        GetErrorFrame {
-            error_code
-        }
-    }
-
-    pub fn new(error_code: ErrorCode) -> Self {
-        Self::new_from_u32(error_code as u32)
-    }
-
-}
-
-impl TryIntoWith<can::Frame, can::Id> for GetErrorFrame {
-
-    fn try_into(self, id: can::Id) -> Result<can::Frame, ()> {
-        let mut buf = heapless::Vec::<u8, U8>::new();
-        buf.push(FrameIdentifier::GetError as u8).unwrap();
-        buf.extend_from_slice(&self.error_code.to_ne_bytes()).unwrap();
-        can::Frame::new(id, &buf)
-    }
-
-}
-
-
-
-pub struct GetDebugFrame {
-    data: [u8; 7]
-}
-
-impl GetDebugFrame {
-
-    pub fn new(data: [u8; 7]) -> Self {
-        GetDebugFrame {
-            data
-        }
-    }
-
-}
-
-impl Into<can::Frame> for GetDebugFrame {
-
-    fn into(self) -> can::Frame {
-        let mut buf = heapless::Vec::<u8, U8>::new();
-        buf.push(FrameIdentifier::GetDebug as u8).unwrap();
-        buf.extend_from_slice(&self.data).unwrap();
-        can::Frame::new(self.id, &buf)
-    }
-
-}
-
-
-pub struct SetTicksFrame {
-    id: can::Id,
-    ticks: i32,
-}
-
-impl SetTicksFrame {
-
-    #[inline(always)]
-    pub fn id(&self) -> can::Id { self.id }
-
-    #[inline(always)]
-    pub fn ticks(&self) -> i32  { self.ticks }
-
-}
-
-impl TryFrom<&can::Frame> for SetTicksFrame {
+impl TryFrom<u8> for Frame {
     type Error = ();
 
-    fn try_from(frame: &can::Frame) -> Result<Self, Self::Error> {
-        let dlc = frame.dlc();
-        if dlc < (4 + 1) {
-            return Err(());
-        }
+    fn try_from(ident: u8) -> Result<Self, Self::Error> {
+        match ident {
+            0 => Ok(Self::GetError { error_code: 0 }),
+            1 => Ok(Self::GetTicks {relative: 0, absolute: 0}),
+            2 => Ok(Self::GetDebug { data: [0; 7] }),
 
-        if frame.data()[0] != (FrameIdentifier::SetTicks as u8) {
-            return Err(())
+            3 => Ok(Self::SetTicks { ticks: 0 }),
+            4 => Ok(Self::SetPolarity { inverted: false }),
+            5 => Ok(Self::SetAbsoluteOffset { offset: 0 }),
+
+            6 => Ok(Self::SaveToMemory),
+            7 => Ok(Self::ClearMemory),
+            _ => Err(())
         }
-        let ticks = i32::from_ne_bytes(frame.data()[1..5].try_into().unwrap());
-        Ok(
-            SetTicksFrame {
-                id: frame.id(),
-                ticks
+    }
+
+}
+
+impl TryIntoWith<can::Frame, can::Id> for Frame {
+
+    fn try_into_with(self, id: can::Id) -> Result<can::Frame, ()> {
+        let mut buf = heapless::Vec::<u8, U8>::new();
+        // buf.push(self.try_into().unwrap());
+        buf.push(self.try_into().unwrap()).unwrap();
+
+        // only need to do output frames here
+        match self {
+            Self::GetTicks {relative, absolute } => {
+                buf.extend_from_slice(&i32::to_ne_bytes(relative)).unwrap();
+                buf.extend_from_slice(&u16::to_ne_bytes(absolute)).unwrap();
+
+            },
+            Self::GetError {error_code} => {
+                buf.push(error_code).unwrap();
+            },
+            Self::GetDebug { data } => {
+                buf.extend_from_slice(&data).unwrap();
             }
-        )
+            _ => return Err(())
+        }
+
+        can::Frame::new(id, buf.deref())
     }
 
 }
 
-pub struct SetPolarityFrame {
-    id: can::Id,
-    polarity: bool
-}
-
-impl SetPolarityFrame {
-
-
-    #[inline(always)]
-    pub fn id(&self) -> can::Id { self.id }
-
-    #[inline(always)]
-    pub fn polarity(&self) -> bool { self.polarity }
-
-}
-
-impl TryFrom<&can::Frame> for SetPolarityFrame {
+impl TryFrom<&can::Frame> for Frame {
     type Error = ();
 
-    fn try_from(frame: &can::Frame) -> Result<Self, Self::Error> {
-        let dlc = frame.dlc();
-        if dlc < 2 { return Err(()) }
-        if frame.data()[0] != (FrameIdentifier::SetPolarity as u8) { return Err(()) }
+    fn try_from(f: &can::Frame) -> Result<Self, Self::Error> {
+        if !f.is_data_frame() { return Err(()) }
+        
+        let _id = f.id();
+        let dlc = f.dlc();
 
-        Ok(SetPolarityFrame {
-            id: frame.id(),
-            polarity: (frame.data()[1] != 0)
-        })
+        if dlc < 1 { return Err(()) }
+        let ident = f.data()[0];
+
+        let mut buf = heapless::Vec::<u8, U7>::new();
+        buf.extend_from_slice(&f.data()[1..dlc]).unwrap();
+
+        match Self::try_from(ident) {
+            Ok(frame) => {
+
+                match frame {
+                    Self::SetTicks { ticks: _ } => {
+                        if buf.len() >= 4 {
+                            let t = i32::from_ne_bytes(buf[0..4].try_into().unwrap());
+                            Ok(Self::SetTicks { ticks: t})
+                        } else { Err(()) }
+                    },
+                    Self::SetPolarity { inverted: _ } => {
+                        if buf.len() >= 1 {
+                            let i = buf[0] != 0;
+                            Ok(Self::SetPolarity { inverted: i})
+                        } else { Err(()) }
+                    },
+                    Self::SetAbsoluteOffset {offset: _} => {
+                        if dlc >= 2 {
+                            let o = u16::from_ne_bytes(buf[0..2].try_into().unwrap());
+                            Ok(Self::SetAbsoluteOffset {offset: o})
+                        } else { Err(())}
+                    },
+                    Self::ClearMemory => Ok(Self::ClearMemory),
+                    Frame::SaveToMemory => Ok(Self::SaveToMemory),
+                    _ => Err(())
+                }
+
+            },
+            Err(_) => return Err(())
+        }
+
     }
 
 }
-
-pub struct SetAbsoluteOffsetFrame {
-    offset: u16
-}
-
-impl SetAbsoluteOffsetFrame {
-
-    #[inline(always)]
-    pub fn offset(&self) -> u16 { self.offset }
-
-}
-
-impl TryFrom<&can::Frame> for SetAbsoluteOffsetFrame {
-    type Error = ();
-
-    fn try_from(frame: &can::Frame) -> Result<Self, Self::Error> {
-        let dlc = frame.dlc();
-        if dlc < 3 || frame.data()[0] != (FrameIdentifier::SetAbsoluteOffset as u8) { return Err(()) }
-        let offset = u16::from_ne_bytes(frame.data()[1..3].try_into().unwrap());
-        Ok(SetAbsoluteOffsetFrame {
-            id: frame.id(),
-            offset
-        })
-    }
-
-}
-
-
-
-
 
 

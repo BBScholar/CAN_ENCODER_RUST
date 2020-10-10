@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(arbitrary_enum_discriminant)]
 
 #[allow(dead_code)]
 
@@ -41,14 +42,10 @@ use rtic::app;
 use rtic::cyccnt::{Instant, U32Ext as _};
 
 use core::convert::{
-    Into, TryInto
+    Into, From, TryFrom
 };
 
-use core::ops::{
-    Deref
-};
-
-use cortex_m_rt::{entry, exception, ExceptionFrame};
+// use cortex_m_rt::{entry, exception, ExceptionFrame};
 
 extern crate static_assertions as sa;
 
@@ -124,7 +121,7 @@ const APP: () = {
             .pclk2((SYSTEM_CLOCK_MHZ).mhz())
             .freeze(&mut flash.acr);
 
-        // gpio structs
+        // gpio structsTryInto
         let mut gpioa = device.GPIOA.split(&mut rcc.apb2);
         let mut gpiob = device.GPIOB.split(&mut rcc.apb2);
 
@@ -145,12 +142,11 @@ const APP: () = {
         // power sense
         let power_sense: hardware_types::PowerSense = gpiob.pb15.into_floating_input(&mut gpiob.crh);
 
-        // encoder pins (need to configure interrupts for this)
+        // encoder pins (need to colet ident: FrameIdentifier = frame.data()[0].try_into().unwrap();urce(&mut afio);
         let mut encoder_a: hardware_types::EncoderChannelA = gpioa.pa8.into_pull_down_input(&mut gpioa.crh);
         let mut encoder_b: hardware_types::EncoderChannelB = gpioa.pa9.into_pull_down_input(&mut gpioa.crh);
         let mut encoder_i: hardware_types::EncoderChannelI = gpioa.pa10.into_pull_down_input(&mut gpioa.crh);
-        
-        encoder_a.make_interrupt_source(&mut afio);
+
         encoder_a.trigger_on_edge(&exti, gpio::Edge::RISING_FALLING);
         encoder_a.enable_interrupt(&exti);
 
@@ -237,11 +233,11 @@ const APP: () = {
 
         // filter any undesired CAN ids
         {
-            let can::Id::Standard(value) = CAN_id;
-            let extended = can::Id::Extended(value);
-
             filters.add(&can::Filter::new(CAN_id).with_mask(0)).unwrap();
-            filters.add(&can::Filter::new(extended).with_mask(0)).unwrap();
+            if let can::Id::Standard(value) = CAN_id {
+                let extended = can::Id::Extended(value);
+                filters.add(&can::Filter::new(extended).with_mask(0)).unwrap();
+            }
         }
         
 
@@ -271,7 +267,7 @@ const APP: () = {
         cx.schedule.can_tx(now + (SYSTEM_CLOCK / 20).cycles()).unwrap();
 
         // schedule low power detection
-        cx.schedule.low_power(now + (SYSTEM_CLOCK / 10).cycles()).unwrap();
+        cx.schedule.low_power(now + (SYSTEM_CLOCK / 100).cycles()).unwrap();
 
         init::LateResources {
             CAN_id,
@@ -361,14 +357,17 @@ const APP: () = {
 
     }
 
-    #[task(resources=[can_rx_queue, can_tx_queue, CAN_id, encoder], schedule=[handle_can_rx])]
+    #[task(resources=[can_rx_queue, can_tx_queue, CAN_id, encoder, eeprom], spawn = [mem_tx],schedule=[handle_can_rx])]
     fn handle_can_rx(cx: handle_can_rx::Context) {
-        use can_types::*;
+        use can_types::Frame;
+        use can_types::TryIntoWith;
+        use can_types::ErrorCode;
 
         let rx_queue = cx.resources.can_rx_queue;
         let tx_queue = cx.resources.can_tx_queue;
         
         let mut encoder = cx.resources.encoder;
+        let eeprom = cx.resources.eeprom;
 
         // call this at 20hz
         // probably want to lock queue here
@@ -379,68 +378,44 @@ const APP: () = {
             //  ignore frames with 0 length
             if frame.dlc() == 0 { continue; }
             // get frame ident in order to match
-            let ident: FrameIdentifier = frame.data()[0].try_into().unwrap();
+            let parsed_frame: Option<Frame> = Frame::try_from(frame).ok();
 
-            let result = match ident {
-                FrameIdentifier::SetTicks => {
-                    let parsed_frame: Option<SetTicksFrame> = frame.deref().try_into().ok();
 
-                    let res: Result<(), ()> =  match parsed_frame {
-                        Some(f) => {
-                            let ticks = f.ticks();
-                            encoder.lock(|encoder| encoder.set_ticks(ticks));
-                            Ok(())
-                        },
-                        None => {
-                            Err(())
+
+            match parsed_frame {
+                Some(parsed_frame) => {
+                    
+                    match parsed_frame {
+                        Frame::SetTicks { ticks } => {
+                            encoder.lock(|encoder| {
+                                encoder.set_ticks(ticks)
+                            });
                         }
-                    };
-
-                    res   
-                },
-                FrameIdentifier::SetPolarity => {
-                    let parsed_frame: Option<SetPolarityFrame> = frame.deref().try_into().ok();
-                    
-                    let res: Result<(), ()> = match parsed_frame {
-                        Some(f) => {
-                            encoder.lock(|encoder| encoder.set_inverted(f.polarity()));
-                            Ok(())
+                        Frame::SetPolarity { inverted } => {
+                            encoder.lock(|encoder| {
+                                encoder.set_inverted(inverted);
+                            });
                         },
-                        None => {Err(())}
-                    };
-
-
-                    res
-                },
-                FrameIdentifier::SetAbsoluteOffset => {
-                    let parsed_frame: Option<SetAbsoluteOffsetFrame> = frame.deref().try_into().ok();
-                    
-                    let res: Result<(), ()> = match parsed_frame {
-                        Some(f) => {
-                            encoder.lock(|encoder| encoder.set_absolute_offset(f.offset()));
-                            Ok(())
+                        Frame::SetAbsoluteOffset { offset } => {
+                            encoder.lock(|encoder| {
+                                encoder.set_absolute_offset(offset);
+                            });
                         },
-                        None => {Err(())}
-                    };
+                        Frame::ClearMemory => {
+                            eeprom.clear_all_memory();
+                        },
+                        Frame::SaveToMemory => {
+                            cx.spawn.mem_tx().unwrap();
+                        },
+                        _ => {}
+                    }
 
-
-                    res
                 },
-                _ => { Err(()) }
-            };
-
-            match result {
-                Ok(_) => {},
-                Err(()) => {
-                    use can_types::{
-                        GetErrorFrame,
-                        ErrorCode
-                    };
-                    let error_frame = GetErrorFrame::new(*cx.resources.CAN_id, ErrorCode::BadCanFrame);
-                    tx_queue.enqueue(error_frame.try_into().unwrap()).unwrap();
+                None => {
+                    let error_frame = Frame::GetError { error_code: ErrorCode::BadCanFrame as u8 };
+                    tx_queue.enqueue(error_frame.try_into_with(*cx.resources.CAN_id).unwrap()).unwrap();
                 }
             }
-
 
         }
 

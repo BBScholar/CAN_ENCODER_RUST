@@ -17,9 +17,10 @@ use heapless::{
     consts::*
 };
 
-use core::convert::{Into, From};
+use core::convert::{Into};
 
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 pub enum Address {
 
     // Volatile
@@ -40,6 +41,7 @@ pub enum Address {
 }
 
 
+#[derive(Copy, Clone)]
 pub struct Settings1 {
     iwidth: bool,
     noiseset: bool,
@@ -66,6 +68,7 @@ impl Into<u16> for &Settings1 {
 
 }
 
+#[derive(Copy, Clone)]
 pub struct Settings2 {
     data: u16
 }
@@ -76,7 +79,9 @@ impl Into<u16> for &Settings2 {
 
 }
 
+#[derive(Copy, Clone)]
 pub struct Zpos {
+    #[allow(dead_code)]
     offset: u16,
     error_low: bool,
     error_high: bool,
@@ -85,6 +90,7 @@ pub struct Zpos {
 impl Into<(u16, u16)> for &Zpos {
 
     fn into(self) -> (u16, u16) {
+        #[allow(unused_mut)]
         let mut zposm = 0u16;
         let mut zposl = 0u16;
 
@@ -105,6 +111,7 @@ impl Into<(u16, u16)> for &Zpos {
 // }
 
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 pub struct AllSettings {
     settings1: Settings1,
     settings2: Settings2,
@@ -227,7 +234,10 @@ where
         }
         self.prev_gpio_value = current_gpio_value;
 
-        // clear both interrupt bit (dont think this is an issue)
+        // 
+        
+
+        // clear both interrupt bits (dont think this is an issue)
         self.a.clear_interrupt_pending_bit();
         self.b.clear_interrupt_pending_bit();
     }
@@ -252,9 +262,9 @@ where
         tx_buf.push(*data).unwrap();
 
         for tx in tx_buf {
-            self.spi.send(tx);
+            self.spi.send(tx); //.unwrap();
             if let Some(word) = self.spi.read().ok() {
-                rx_buf.push(word);
+                rx_buf.push(word).unwrap();
             } else {
                 return Err(())
             }
@@ -274,7 +284,7 @@ where
             Err(_) => return Err(())
         };
         if let Some(word) = self.spi.read().ok() {
-            rx_buf.extend_from_slice(&word.to_ne_bytes());
+            rx_buf.extend_from_slice(&word.to_ne_bytes()).unwrap();
         } else {
             return Err(())
         }
@@ -288,9 +298,9 @@ where
     }
 
     pub fn config_all(&mut self, settings: &AllSettings) {
-        self.config_settings1(&settings.settings1());
-        self.config_settings2(&settings.settings2());
-        self.config_zpos(&settings.zpos());
+        self.config_settings1(&settings.settings1()).unwrap();
+        self.config_settings2(&settings.settings2()).unwrap();
+        self.config_zpos(&settings.zpos()).unwrap();
     }
 
     pub fn config_settings1(&mut self, settings: &Settings1) -> Result<(), ()> {
