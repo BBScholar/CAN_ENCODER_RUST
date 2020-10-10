@@ -1,3 +1,4 @@
+#![feature(lang_items)]
 #![no_std]
 #![no_main]
 #![feature(arbitrary_enum_discriminant)]
@@ -10,10 +11,10 @@ mod memory;
 mod status;
 
 // pick a panicking behavior
-use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
-                     // use panic_abort as _; // requires nightly
-                     // use panic_itm as _; // logs messages over ITM; requires ITM support
-                     // use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
+// use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
+// use panic_abort as _; // requires nightly
+// use panic_itm as _; // logs messages over ITM; requires ITM support
+// use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
 
 use cortex_m::peripheral::DWT;
 // use cortex_m_semihosting::hprintln;
@@ -40,9 +41,8 @@ const SYSTEM_CLOCK_MHZ: u32 = 72;
 const SYSTEM_CLOCK: u32 = SYSTEM_CLOCK_MHZ * 1E6 as u32; // hz
 
 // Size of 32 element frame queue is 16 bytes * 32 elements = 512 bytes
-type Queue<T> = heapless::mpmc::Q32<T>;
+type Queue<T> = heapless::mpmc::Q8<T>;
 type FrameQueue = Queue<can::Frame>;
-type StatusQueue = Queue<status::LedStateTriple>;
 
 // waiting for the CAN API to be released
 // https://github.com/stm32-rs/stm32f1xx-hal/pull/215
@@ -71,9 +71,6 @@ const APP: () = {
         can_rx_queue: FrameQueue,
         #[init(0)]
         can_rx_count: usize,
-
-        // status queue
-        status_queue: StatusQueue,
 
         // hardware
         status_handler: status::StatusHandler,
@@ -285,8 +282,6 @@ const APP: () = {
 
         let can_rx_queue = FrameQueue::new();
 
-        let status_queue = StatusQueue::new();
-
         can.enable().ok();
 
         // initalize timer
@@ -312,7 +307,6 @@ const APP: () = {
             can_tx_queue,
             can_rx,
             can_rx_queue,
-            status_queue,
             status_handler,
             power_sense,
             encoder,
@@ -536,3 +530,11 @@ const APP: () = {
 
     }
 };
+
+#[panic_handler]
+fn my_panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+#[lang = "eh_personality"]
+extern "C" fn eh_personality() {}

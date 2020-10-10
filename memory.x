@@ -1,3 +1,5 @@
+ENTRY(ResetHandler)
+
 /* Highest address of the user mode stack */
 _estack = 0x20005000;    /* end of RAM */
 /* Generate a link error if heap and stack don't fit into RAM */
