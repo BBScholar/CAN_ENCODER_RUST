@@ -1,49 +1,33 @@
+use embedded_hal::blocking::i2c::{Read, Write, WriteRead};
 
-use embedded_hal::blocking::i2c::{
-    Write, Read, WriteRead
-};
+use num_traits::{cast::FromPrimitive, cast::ToPrimitive, Num, PrimInt};
 
-use num_traits::{
-    cast::ToPrimitive,
-    cast::FromPrimitive,
-    Num,
-    PrimInt
-};
+use heapless::consts::*;
 
-use heapless::{
-    consts::*,
-};
-
-use core::{
-    ops::Deref,
-    convert::TryInto
-};
+use core::{convert::TryInto, ops::Deref};
 
 // these are word addresses, since we aren't storing much data
 #[allow(dead_code)]
 pub enum Address {
-    Ticks          = 0x00, // 32 bit int
-    Polarity       = 4,    // 8 bit boolean
-    AbsoluteOffset = 5     // 16 bit uint
+    Ticks = 0x00,       // 32 bit int
+    Polarity = 4,       // 8 bit boolean
+    AbsoluteOffset = 5, // 16 bit uint
 }
 
 pub struct EEProm<I2C> {
-    i2c: I2C
+    i2c: I2C,
 }
 
-impl <I2C, E> EEProm<I2C>
+impl<I2C, E> EEProm<I2C>
 where
-    I2C: Read<Error = E> + Write<Error = E> + WriteRead<Error = E>
+    I2C: Read<Error = E> + Write<Error = E> + WriteRead<Error = E>,
 {
-    
     const EEPROM_ADDRESS: u8 = 0b10101110; // last bit signals read or write
     const MIN_MEMORY_ADDRESS: u8 = 0;
     const MAX_MEMORY_ADDRESS: u8 = 127;
 
     pub fn new(i2c: I2C) -> Self {
-        EEProm {
-            i2c
-        }
+        EEProm { i2c }
     }
 
     pub fn clear_all_memory(&mut self) {
@@ -76,7 +60,9 @@ where
         let mut out_buf = heapless::Vec::<u8, U4>::new();
         out_buf.resize(size, 0).ok();
 
-        self.i2c.write_read(Self::EEPROM_ADDRESS, &buf, out_buf.as_mut()).ok();
+        self.i2c
+            .write_read(Self::EEPROM_ADDRESS, &buf, out_buf.as_mut())
+            .ok();
 
         // convert back from i32
         let temp = i32::from_ne_bytes(out_buf.deref().try_into().unwrap());
@@ -93,6 +79,4 @@ where
         let temp: u8 = self.read_data(address);
         return temp != 0;
     }
-
-
 }

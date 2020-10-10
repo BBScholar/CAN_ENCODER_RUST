@@ -6,31 +6,51 @@ use embedded_hal::digital::v2::OutputPin;
 use crate::hardware_types::{StatusLed1, StatusLed2, StatusLed3};
 
 #[allow(dead_code)]
-pub enum LedState { On, Off, FlashSlow, FlashFast }
+pub enum LedState {
+    On,
+    Off,
+    FlashSlow,
+    FlashFast,
+}
 
 pub struct LedStateTriple(LedState, LedState, LedState);
 
 impl LedStateTriple {
-    const OFF: LedStateTriple = LedStateTriple { 0: LedState::Off, 1: LedState::Off, 2: LedState::Off };
-    const ON: LedStateTriple = LedStateTriple  { 0: LedState::On,  1: LedState::On,  2: LedState::On  };}
-
+    const OFF: LedStateTriple = LedStateTriple {
+        0: LedState::Off,
+        1: LedState::Off,
+        2: LedState::Off,
+    };
+    const ON: LedStateTriple = LedStateTriple {
+        0: LedState::On,
+        1: LedState::On,
+        2: LedState::On,
+    };
+}
 
 pub struct StatusHandler {
     status1: StatusLed1,
     status2: StatusLed2,
     status3: StatusLed3,
-    current_status: LedStateTriple
+    current_status: LedStateTriple,
 }
 
 impl StatusHandler {
-    
     pub fn new(status1: StatusLed1, status2: StatusLed2, status3: StatusLed3) -> Self {
         Self::new_with_status(status1, status2, status3, LedStateTriple::OFF)
     }
 
-    pub fn new_with_status(status1: StatusLed1, status2: StatusLed2, status3: StatusLed3, led_status: LedStateTriple) -> Self {
+    pub fn new_with_status(
+        status1: StatusLed1,
+        status2: StatusLed2,
+        status3: StatusLed3,
+        led_status: LedStateTriple,
+    ) -> Self {
         StatusHandler {
-            status1, status2, status3, current_status: led_status
+            status1,
+            status2,
+            status3,
+            current_status: led_status,
         }
     }
 
@@ -42,8 +62,5 @@ impl StatusHandler {
         self.current_status = state;
     }
 
-    pub fn update(&mut self) {
-
-    }
-
+    pub fn update(&mut self) {}
 }

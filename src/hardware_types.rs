@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use stm32f1xx_hal::{
-    gpio, spi, pac, i2c
-};
+use stm32f1xx_hal::{gpio, i2c, pac, spi};
 
 // Status
 pub type StatusLed1 = gpio::gpiob::PB5<gpio::Output<gpio::PushPull>>;
@@ -17,7 +15,7 @@ pub type PowerSense = gpio::gpiob::PB15<gpio::Input<gpio::Floating>>;
 // SPI definitions
 pub type MOSIPin = gpio::gpioa::PA5<gpio::Alternate<gpio::PushPull>>;
 pub type MISOPin = gpio::gpioa::PA6<gpio::Input<gpio::Floating>>;
-pub type SCKPin =  gpio::gpioa::PA7<gpio::Alternate<gpio::PushPull>>;
+pub type SCKPin = gpio::gpioa::PA7<gpio::Alternate<gpio::PushPull>>;
 pub type SPIPins = (MOSIPin, MISOPin, SCKPin);
 pub type SPI = spi::Spi<pac::SPI1, spi::Spi1NoRemap, SPIPins, u16>;
 
@@ -33,5 +31,3 @@ pub type EncoderChannelB = gpio::gpioa::PA9<gpio::Input<gpio::PullDown>>;
 pub type EncoderChannelI = gpio::gpioa::PA10<gpio::Input<gpio::PullDown>>;
 
 pub type EncoderChannel = gpio::Pxx<gpio::Input<gpio::PullDown>>;
-
-
